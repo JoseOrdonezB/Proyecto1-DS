@@ -184,7 +184,7 @@ variantes_detectadas
 ```
 
 ```{r registros duplicados}
-datos_revision <- dataset_formatos |>
+datos_revision <- dataset_normalizado |>
   mutate(id_registro = row_number())
 
 columnas_comparacion <- setdiff(
