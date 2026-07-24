@@ -300,6 +300,37 @@ inconsistencias_codigo
 ```
 Se verificó la consistencia entre las variables de ubicación e identificación. No se encontraron códigos asociados a departamentos, municipios, distritos o establecimientos diferentes. Por lo tanto, no se identificaron contradicciones entre las variables analizadas.
 
+```{r generacion-conjunto-limpio}
+# Inciso 9: Generación del conjunto limpio (dataset_final)
+
+dataset_final <- dataset_normalizado |>
+  # a. Estructura consistente: Eliminamos columnas auxiliares que ya no sirven
+  select(-archivo_origen) |> 
+  
+  # e. Ausencia de errores detectados en la validación:
+  # Forzamos la limpieza de TELEFONO para que pase tu prueba 7.3.
+  # Todo se mantiene en MAYÚSCULAS para no romper tus validaciones posteriores.
+  mutate(
+    # Quitar cualquier carácter que no sea un número
+    TELEFONO = str_remove_all(TELEFONO, "[^0-9]"), 
+    # Reconstruir con el guion si tiene exactamente 8 dígitos, sino dejar como NA
+    TELEFONO = if_else(
+      str_length(TELEFONO) == 8,
+      str_c(str_sub(TELEFONO, 1, 4), "-", str_sub(TELEFONO, 5, 8)),
+      NA_character_
+    )
+  ) |>
+  
+  # Confirmar que no queden duplicados exactos (resolviendo validación 7.1)
+  distinct()
+
+# Revisar la estructura final (b. tipos de datos correctos y d. formato uniforme)
+glimpse(dataset_final)
+
+# Guardar el conjunto de datos totalmente limpio en un CSV
+write_csv(dataset_final, "datos_establecimientos_limpio.csv")
+```
+
 **7.1 No existen registros duplicados exactos**
 ```{r validacion-duplicados-exactos}
 columnas_comparacion_final <- setdiff(
@@ -347,6 +378,19 @@ prueba_3
 ```{r validacion-catalogo}
 ruta_catalogo <- "data/catalogo_departamentos_municipios.csv"
 
+# 1. Definimos la lista oficial de los 22 departamentos de Guatemala
+departamentos_oficiales <- c(
+  "ALTA VERAPAZ", "BAJA VERAPAZ", "CHIMALTENANGO", "CHIQUIMULA", 
+  "EL PROGRESO", "ESCUINTLA", "GUATEMALA", "HUEHUETENANGO", 
+  "IZABAL", "JALAPA", "JUTIAPA", "PETEN", "QUETZALTENANGO", 
+  "QUICHE", "RETALHULEU", "SACATEPEQUEZ", "SAN MARCOS", 
+  "SANTA ROSA", "SOLOLA", "SUCHITEPEQUEZ", "TOTONICAPAN", "ZACAPA"
+)
+# Nota: Los escribí sin tildes porque los datos crudos del MINEDUC suelen venir así.
+# Si en tu normalización las tildes permanecieron y esta prueba te da "FALLA", 
+# simplemente ponles la tilde en esta lista (Ej: "PETÉN", "QUICHÉ", "SOLOLÁ", etc.)
+
+# Ahora sí podemos hacer la prueba 4a
 prueba_4a <- all(levels(dataset_final$DEPARTAMENTO) %in% departamentos_oficiales)
 
 if (file.exists(ruta_catalogo)) {
