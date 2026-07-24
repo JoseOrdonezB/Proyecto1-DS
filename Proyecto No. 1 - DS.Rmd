@@ -8,8 +8,159 @@ date: "2026-07-24"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r cargar datos}
-
-
+```{r librerias}
+library(readr)
+library(dplyr)
+library(purrr)
+library(stringr)
+library(tidyr)
 ```
+
+
+```{r cargar datos}
+archivos <- list.files(
+  "data",
+  pattern = "\\.csv$",
+  full.names = TRUE
+)
+
+nombres_columnas <- read_csv(
+  archivos[1],
+  skip = 25,
+  n_max = 0,
+  show_col_types = FALSE
+) |>
+  names()
+
+dataset_completo <- archivos |>
+  set_names() |>
+  map_dfr(
+    ~ read_csv(
+      .x,
+      skip = 26,
+      col_names = nombres_columnas,
+      col_types = cols(.default = col_character()),
+      show_col_types = FALSE
+    ),
+    .id = "archivo_origen"
+  ) |>
+  mutate(
+    CODIGO = str_squish(CODIGO),
+    ESTABLECIMIENTO = str_squish(ESTABLECIMIENTO)
+  ) |>
+  filter(
+    !is.na(CODIGO),
+    !is.na(ESTABLECIMIENTO),
+    str_detect(CODIGO, "^\\d{2}-\\d{2}")
+  )
+```
+
+```{r tratamiento-datos}
+valores_faltantes <- c(
+  "", "NA", "N/A", "NULL", "NULO", "SIN DATO",
+  "-", ".", "S/D", "NO DISPONIBLE"
+)
+
+dataset_limpio <- dataset_completo |>
+  mutate(
+    across(
+      where(is.character),
+      ~ {
+        valor_original <- str_squish(.x)
+        valor_normalizado <- str_to_upper(valor_original)
+
+        if_else(
+          valor_normalizado %in% valores_faltantes,
+          NA_character_,
+          valor_original
+        )
+      }
+    )
+  )
+
+summary(dataset_limpio)
+```
+Los valores faltantes fueron estandarizados como NA. Se eliminaron espacios iniciales, finales y repetidos mediante str_squish(). Las cadenas vacías y valores equivalentes a ausencia de información —como N/A, NULL, -, ., Sin dato, S/D y No disponible. Se identificaron sin importar mayúsculas o minúsculas y se reemplazaron por NA. Los valores existentes de tipo NA se conservaron.
+
+```{r tipos correctos}
+variables_categoricas <- c(
+  "DEPARTAMENTO", "MUNICIPIO", "NIVEL", "SECTOR",
+  "AREA", "STATUS", "MODALIDAD", "JORNADA",
+  "PLAN", "DEPARTAMENTAL"
+)
+
+dataset_tipado <- dataset_limpio |>
+  mutate(
+    across(
+      all_of(variables_categoricas),
+      ~ str_to_upper(str_squish(.x))
+    ),
+    across(
+      all_of(variables_categoricas),
+      as.factor
+    )
+  )
+
+glimpse(dataset_tipado)
+
+resumen_categorias <- dataset_tipado |>
+  summarise(
+    across(
+      all_of(variables_categoricas),
+      ~ n_distinct(.x, na.rm = TRUE)
+    )
+  ) |>
+  pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "cantidad_categorias"
+  ) |>
+  arrange(desc(cantidad_categorias))
+
+resumen_categorias
+```
+Después de estandarizar mayúsculas y espacios en las variables categóricas, se verificó que las categorías fueran consistentes. Se identificaron 22 departamentos y 340 municipios, valores coherentes con la estructura territorial esperada. Las variables categóricas fueron almacenadas como factores, mientras que los identificadores (CODIGO, DISTRITO y TELEFONO) se conservaron como texto para no perder guiones, ceros iniciales u otros caracteres relevantes.
+
+```{r normalización de texto}
+texto_libre <- c(
+  "ESTABLECIMIENTO", "DIRECCION", "SUPERVISOR", "DIRECTOR"
+)
+
+variables_categoricas <- c(
+  "DEPARTAMENTO", "MUNICIPIO", "NIVEL", "SECTOR",
+  "AREA", "STATUS", "MODALIDAD", "JORNADA",
+  "PLAN", "DEPARTAMENTAL"
+)
+
+columnas_texto <- c(texto_libre, variables_categoricas)
+
+limpiar_texto <- function(x) {
+  x |>
+    as.character() |>
+    str_replace_all("[\u200B\u200C\u200D\uFEFF]", "") |>
+    str_replace_all("[\\p{Z}\\t\\r\\n]+", " ") |>
+    str_squish() |>
+    str_replace_all("([,;:])\\1+", "\\1") |>
+    str_replace_all("\\s+([,;:])", "\\1") |>
+    str_squish()
+}
+
+dataset_normalizado <- dataset_tipado |>
+  mutate(
+    across(
+      all_of(texto_libre),
+      ~ str_to_upper(limpiar_texto(.x))
+    ),
+    across(
+      all_of(variables_categoricas),
+      ~ as.factor(str_to_upper(limpiar_texto(.x)))
+    )
+  )
+
+glimpse(dataset_normalizado)
+```
+
+
+
+
 
