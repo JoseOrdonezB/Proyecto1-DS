@@ -1,0 +1,15 @@
+---
+title: "Proyecto No. 1 - DS"
+output: html_document
+date: "2026-07-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r cargar datos}
+
+
+```
+
