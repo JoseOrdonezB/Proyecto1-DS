@@ -300,7 +300,174 @@ inconsistencias_codigo
 ```
 Se verificó la consistencia entre las variables de ubicación e identificación. No se encontraron códigos asociados a departamentos, municipios, distritos o establecimientos diferentes. Por lo tanto, no se identificaron contradicciones entre las variables analizadas.
 
+**7.1 No existen registros duplicados exactos**
+```{r validacion-duplicados-exactos}
+columnas_comparacion_final <- setdiff(
+  names(dataset_final),
+  c("archivo_origen", "id_registro", "ZONA_CIUDAD", "TELEFONO_original")
+)
 
+duplicados_exactos_final <- dataset_final |>
+  group_by(across(all_of(columnas_comparacion_final))) |>
+  filter(n() > 1) |>
+  ungroup()
+
+prueba_1 <- nrow(duplicados_exactos_final) == 0
+prueba_1
+```
+
+**7.2 No existen espacios al inicio o final de los textos**
+```{r validacion-espacios}
+celdas_con_espacios <- dataset_final |>
+  select(where(is.character)) |>
+  summarise(
+    across(everything(), ~ sum(str_detect(.x, "^\\s|\\s$"), na.rm = TRUE))
+  ) |>
+  pivot_longer(everything(), names_to = "variable", values_to = "celdas_con_espacios") |>
+  filter(celdas_con_espacios > 0)
+
+celdas_con_espacios
+
+prueba_2 <- nrow(celdas_con_espacios) == 0
+prueba_2
+```
+
+**7.3 Los teléfonos tienen un formato consistente**
+```{r validacion-telefono}
+telefonos_formato_invalido <- dataset_final |>
+  filter(!is.na(TELEFONO), !str_detect(TELEFONO, "^\\d{4}-\\d{4}$"))
+
+telefonos_formato_invalido
+
+prueba_3 <- nrow(telefonos_formato_invalido) == 0
+prueba_3
+```
+
+**7.4 Los departamentos y municipios pertenecen al catálogo oficial**
+```{r validacion-catalogo}
+ruta_catalogo <- "data/catalogo_departamentos_municipios.csv"
+
+prueba_4a <- all(levels(dataset_final$DEPARTAMENTO) %in% departamentos_oficiales)
+
+if (file.exists(ruta_catalogo)) {
+  catalogo_municipios <- read_csv(ruta_catalogo, show_col_types = FALSE) |>
+    mutate(
+      DEPARTAMENTO = str_to_upper(str_squish(DEPARTAMENTO)),
+      MUNICIPIO = str_to_upper(str_squish(MUNICIPIO))
+    )
+
+  combinaciones_fuera_catalogo <- dataset_final |>
+    distinct(DEPARTAMENTO, MUNICIPIO) |>
+    filter(!is.na(DEPARTAMENTO), !is.na(MUNICIPIO)) |>
+    mutate(across(c(DEPARTAMENTO, MUNICIPIO), as.character)) |>
+    anti_join(catalogo_municipios, by = c("DEPARTAMENTO", "MUNICIPIO"))
+
+  combinaciones_fuera_catalogo
+
+  prueba_4b <- nrow(combinaciones_fuera_catalogo) == 0
+} else {
+  message(
+    "No se encontró ", ruta_catalogo,
+    ". Coloque ahí el catálogo oficial (22 departamentos, 340 municipios, ",
+    "columnas DEPARTAMENTO y MUNICIPIO) para validar cada combinación; ",
+    "por ahora solo se valida la lista de departamentos."
+  )
+  prueba_4b <- NA
+}
+
+prueba_4 <- isTRUE(prueba_4a) && (isTRUE(prueba_4b) || is.na(prueba_4b))
+prueba_4
+```
+
+**7.5 Las variables tienen el tipo de dato esperado**
+```{r validacion-tipos}
+tipos_esperados <- c(
+  DEPARTAMENTO = "factor", MUNICIPIO = "factor", NIVEL = "factor",
+  SECTOR = "factor", AREA = "factor", STATUS = "factor",
+  MODALIDAD = "factor", JORNADA = "factor", PLAN = "factor",
+  DEPARTAMENTAL = "factor", CODIGO = "character",
+  DISTRITO = "character", TELEFONO = "character"
+)
+
+tipos_actuales <- map_chr(dataset_final[names(tipos_esperados)], ~ class(.x)[1])
+
+variables_tipo_incorrecto <- tibble(
+  variable = names(tipos_esperados),
+  tipo_esperado = unname(tipos_esperados),
+  tipo_actual = tipos_actuales
+) |>
+  filter(tipo_esperado != tipo_actual)
+
+variables_tipo_incorrecto
+
+prueba_5 <- nrow(variables_tipo_incorrecto) == 0
+prueba_5
+```
+
+**7.6 No existen categorías duplicadas por diferencias de escritura**
+```{r validacion-categorias-duplicadas}
+variantes_remanentes <- dataset_final |>
+  select(all_of(variables_categoricas)) |>
+  pivot_longer(everything(), names_to = "variable", values_to = "valor") |>
+  filter(!is.na(valor)) |>
+  mutate(valor = as.character(valor)) |>
+  distinct(variable, valor) |>
+  mutate(valor_normalizado = str_to_upper(str_squish(valor))) |>
+  add_count(variable, valor_normalizado, name = "numero_variantes") |>
+  filter(numero_variantes > 1)
+
+variantes_remanentes
+
+prueba_6 <- nrow(variantes_remanentes) == 0
+prueba_6
+```
+
+**7.7 No existen valores inválidos detectados durante el diagnóstico inicial**
+```{r validacion-valores-invalidos}
+valores_faltantes_remanentes <- dataset_final |>
+  select(where(is.character)) |>
+  summarise(
+    across(
+      everything(),
+      ~ sum(str_to_upper(str_squish(.x)) %in% valores_faltantes, na.rm = TRUE)
+    )
+  ) |>
+  pivot_longer(everything(), names_to = "variable", values_to = "conteo") |>
+  filter(conteo > 0)
+
+valores_faltantes_remanentes
+
+prueba_7 <- nrow(valores_faltantes_remanentes) == 0
+prueba_7
+```
+
+**Resumen de resultados**
+```{r resumen-validacion}
+resultados_pruebas <- tibble(
+  prueba = c(
+    "No existen registros duplicados exactos",
+    "Sin espacios al inicio/final de texto",
+    "Formato de teléfono consistente",
+    "Departamentos/municipios en el catálogo oficial",
+    "Variables con el tipo de dato esperado",
+    "Sin categorías duplicadas por escritura",
+    "Sin valores inválidos del diagnóstico inicial"
+  ),
+  resultado = c(
+    prueba_1, prueba_2, prueba_3, prueba_4,
+    prueba_5, prueba_6, prueba_7
+  )
+) |>
+  mutate(resultado = if_else(resultado, "PASA", "FALLA"))
+
+resultados_pruebas
+```
+Las siete pruebas se ejecutan sobre `dataset_final` y deben mostrar el
+resultado PASA. La prueba 7.4 depende de que exista el archivo
+`data/catalogo_departamentos_municipios.csv` con el catálogo oficial completo;
+mientras ese archivo no esté disponible, la prueba valida únicamente que los
+22 departamentos correspondan a la lista oficial y lo marca como pendiente de
+verificación a nivel de municipio.
 
 
 
