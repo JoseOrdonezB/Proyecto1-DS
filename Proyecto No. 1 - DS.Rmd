@@ -14,6 +14,7 @@ library(dplyr)
 library(purrr)
 library(stringr)
 library(tidyr)
+library(stringdist)
 ```
 
 
@@ -159,6 +160,145 @@ dataset_normalizado <- dataset_tipado |>
 
 glimpse(dataset_normalizado)
 ```
+Se normalizaron las variables de texto eliminando espacios iniciales, finales, múltiples y caracteres invisibles. Se unificó el uso de mayúsculas y se conservaron las tildes, ya que forman parte correcta del idioma español.
+
+```{r consistencia de categoria}
+# Detectar variantes antes de normalizar:
+variantes_detectadas <- dataset_limpio |>
+  select(all_of(variables_categoricas)) |>
+  pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "valor_original"
+  ) |>
+  filter(!is.na(valor_original)) |>
+  mutate(
+    valor_normalizado = str_to_upper(limpiar_texto(valor_original))
+  ) |>
+  distinct(variable, valor_original, valor_normalizado) |>
+  add_count(variable, valor_normalizado, name = "numero_variantes") |>
+  filter(numero_variantes > 1) |>
+  arrange(variable, valor_normalizado, valor_original)
+
+variantes_detectadas
+```
+
+```{r registros duplicados}
+datos_revision <- dataset_formatos |>
+  mutate(id_registro = row_number())
+
+columnas_comparacion <- setdiff(
+  names(datos_revision),
+  c("archivo_origen", "id_registro")
+)
+
+duplicados_exactos <- datos_revision |>
+  group_by(across(all_of(columnas_comparacion))) |>
+  mutate(repeticiones = n()) |>
+  filter(repeticiones > 1) |>
+  ungroup() |>
+  arrange(desc(repeticiones), CODIGO)
+
+duplicados_exactos
+
+codigos_repetidos <- datos_revision |>
+  filter(!is.na(CODIGO)) |>
+  group_by(CODIGO) |>
+  filter(n() > 1) |>
+  ungroup() |>
+  arrange(CODIGO, ESTABLECIMIENTO)
+
+codigos_repetidos
+```
+
+```{r duplicados-parciales}
+buscar_similares <- function(grupo) {
+  grupo <- grupo |>
+    filter(!is.na(ESTABLECIMIENTO))
+
+  if (nrow(grupo) < 2) {
+    return(tibble())
+  }
+
+  pares <- combn(seq_len(nrow(grupo)), 2)
+
+  distancia <- stringdist(
+    grupo$ESTABLECIMIENTO[pares[1, ]],
+    grupo$ESTABLECIMIENTO[pares[2, ]],
+    method = "jw",
+    p = 0.1
+  )
+
+  tibble(
+    municipio = as.character(grupo$MUNICIPIO[1]),
+    id_registro_1 = grupo$id_registro[pares[1, ]],
+    codigo_1 = grupo$CODIGO[pares[1, ]],
+    establecimiento_1 = grupo$ESTABLECIMIENTO[pares[1, ]],
+    id_registro_2 = grupo$id_registro[pares[2, ]],
+    codigo_2 = grupo$CODIGO[pares[2, ]],
+    establecimiento_2 = grupo$ESTABLECIMIENTO[pares[2, ]],
+    similitud = round(1 - distancia, 3)
+  ) |>
+    filter(similitud >= 0.93) |>
+    arrange(desc(similitud))
+}
+
+duplicados_parciales <- datos_revision |>
+  filter(!is.na(MUNICIPIO), !is.na(ESTABLECIMIENTO)) |>
+  group_split(MUNICIPIO) |>
+  map_dfr(buscar_similares)
+
+duplicados_parciales
+
+coincidencias_nombre_exacto <- duplicados_parciales |>
+  filter(similitud == 1) |>
+  mutate(
+    resultado_preliminar = case_when(
+      codigo_1 == codigo_2 ~ "Posible duplicado: mismo código y mismo nombre",
+      TRUE ~ "Revisar: mismo nombre, códigos distintos"
+    )
+  )
+
+coincidencias_nombre_exacto
+```
+Se detectaron pares de establecimientos con similitud Jaro-Winkler igual a 1, es decir, con nombres idénticos dentro del mismo municipio. Sin embargo, los registros poseen códigos distintos y no fueron eliminados automáticamente, ya que podrían corresponder a establecimientos diferentes que comparten una misma denominación.
+
+```{r consistencia-variables}
+inconsistencias_codigo <- datos_revision |>
+  filter(!is.na(CODIGO)) |>
+  group_by(CODIGO) |>
+  summarise(
+    registros = n(),
+    n_departamentos = n_distinct(DEPARTAMENTO, na.rm = TRUE),
+    n_municipios = n_distinct(MUNICIPIO, na.rm = TRUE),
+    n_distritos = n_distinct(DISTRITO, na.rm = TRUE),
+    n_establecimientos = n_distinct(ESTABLECIMIENTO, na.rm = TRUE),
+
+    departamentos = str_c(
+      sort(unique(na.omit(as.character(DEPARTAMENTO)))),
+      collapse = " | "
+    ),
+    municipios = str_c(
+      sort(unique(na.omit(as.character(MUNICIPIO)))),
+      collapse = " | "
+    ),
+    establecimientos = str_c(
+      sort(unique(na.omit(ESTABLECIMIENTO))),
+      collapse = " | "
+    ),
+    .groups = "drop"
+  ) |>
+  filter(
+    n_departamentos > 1 |
+    n_municipios > 1 |
+    n_distritos > 1 |
+    n_establecimientos > 1
+  ) |>
+  arrange(desc(registros), CODIGO)
+
+inconsistencias_codigo
+```
+Se verificó la consistencia entre las variables de ubicación e identificación. No se encontraron códigos asociados a departamentos, municipios, distritos o establecimientos diferentes. Por lo tanto, no se identificaron contradicciones entre las variables analizadas.
 
 
 
